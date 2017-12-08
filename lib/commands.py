@@ -38,7 +38,7 @@ from .util import bfh, bh2u, format_satoshis
 from .import bitcoin
 from .bitcoin import is_address,  hash_160, COIN, TYPE_ADDRESS
 from .i18n import _
-from .transaction import Transaction
+from .transaction import Transaction, multisig_script
 from .paymentrequest import PR_PAID, PR_UNPAID, PR_UNKNOWN, PR_EXPIRED
 from .plugins import run_hook
 
@@ -256,7 +256,7 @@ class Commands:
     def createmultisig(self, num, pubkeys):
         """Create multisig address"""
         assert isinstance(pubkeys, list), (type(num), type(pubkeys))
-        redeem_script = Transaction.multisig_script(pubkeys, num)
+        redeem_script = multisig_script(pubkeys, num)
         address = bitcoin.hash160_to_p2sh(hash_160(bfh(redeem_script)))
         return {'address':address, 'redeemScript':redeem_script}
 
@@ -273,6 +273,8 @@ class Commands:
     @command('wp')
     def getprivatekeys(self, address, password=None):
         """Get private keys of addresses. You may pass a single wallet address, or a list of wallet addresses."""
+        if isinstance(address, str):
+            address = address.strip()
         if is_address(address):
             return self.wallet.export_private_key(address, password)[0]
         domain = address
@@ -381,16 +383,17 @@ class Commands:
             raise BaseException('cannot verify alias', x)
         return out['address']
 
-    @command('nw')
+    @command('n')
     def sweep(self, privkey, destination, fee=None, nocheck=False, imax=100):
         """Sweep private keys. Returns a transaction that spends UTXOs from
         privkey to a destination address. The transaction is not
         broadcasted."""
+        from .wallet import sweep
         tx_fee = satoshis(fee)
         privkeys = privkey.split()
         self.nocheck = nocheck
-        dest = self._resolver(destination)
-        tx = self.wallet.sweep(privkeys, self.network, self.config, dest, tx_fee, imax)
+        #dest = self._resolver(destination)
+        tx = sweep(privkeys, self.network, self.config, destination, tx_fee, imax)
         return tx.as_dict() if tx else None
 
     @command('wp')
@@ -404,6 +407,7 @@ class Commands:
     def verifymessage(self, address, signature, message):
         """Verify a signature."""
         sig = base64.b64decode(signature)
+        message = util.to_bytes(message)
         return bitcoin.verify_message(address, sig, message)
 
     def _mktx(self, outputs, fee, change_addr, domain, nocheck, unsigned, rbf, password, locktime=None):
@@ -705,7 +709,7 @@ command_options = {
     'nocheck':     (None, "Do not verify aliases"),
     'imax':        (None, "Maximum number of inputs"),
     'fee':         ("-f", "Transaction fee (in BTC)"),
-    'from_addr':   ("-F", "Source address. If it isn't in the wallet, it will ask for the private key unless supplied in the format public_key:private_key. It's not saved in the wallet."),
+    'from_addr':   ("-F", "Source address (must be a wallet address; use sweep to spend from non-wallet address)."),
     'change_addr': ("-c", "Change address. Default is a spare address, or the source address if it's not in the wallet"),
     'nbits':       (None, "Number of bits of entropy"),
     'entropy':     (None, "Custom entropy"),
